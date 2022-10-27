@@ -240,6 +240,9 @@ class Tags
 
         $modelNames = collect();
 
+        /**
+         * @var Model $model
+         */
         foreach ($models as $model) {
             foreach ($model->getAttributes() as $key => $updated) {
                 if (
@@ -642,7 +645,7 @@ class Tags
         $this->dbStatement($sql);
     }
 
-    public function granularPropertyIsAllowed($name, $model)
+    public function granularPropertyIsAllowed(string $name, Model $model): bool
     {
         $ignored = collect(
             Helpers::configArray('edge-flush.invalidations.properties.ignored'),
