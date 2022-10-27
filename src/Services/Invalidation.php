@@ -158,31 +158,23 @@ class Invalidation
     {
         $this->type = 'tag';
 
-        $this->tags = $tags;
+        if ($tags->isEmpty()) {
+            $this->tags = collect();
+
+            return $this;
+        }
+
+        if (is_string($tags[0])) {
+            $this->tagNames = $tags;
+        } else {
+            $this->tags = $tags;
+        }
 
         return $this;
     }
 
     public function isEmpty(): bool
     {
-        //        dd(
-        //            [
-        //                'tags' => $this->tags()->isEmpty(),
-        //                'tagNames' => $this->tagNames()->isEmpty(),
-        //                'models' => $this->models()->isEmpty(),
-        //                'modelNames' => $this->modelNames()->isEmpty(),
-        //                'urls' => $this->urls()->isEmpty(),
-        //                'urlNames' => $this->urlNames()->isEmpty(),
-        //
-        //                'result' => $this->tags()->isEmpty() &&
-        //                    $this->tagNames()->isEmpty() &&
-        //                    $this->models()->isEmpty() &&
-        //                    $this->modelNames()->isEmpty() &&
-        //                    $this->urls()->isEmpty() &&
-        //                    $this->urlNames()->isEmpty()
-        //            ]
-        //        );
-
         return blank($this->type()) ||
             ($this->tags()->isEmpty() &&
                 $this->tagNames()->isEmpty() &&
@@ -196,15 +188,25 @@ class Invalidation
     {
         $this->type = 'model';
 
-        $this->models = $models;
+        if ($models->isEmpty()) {
+            $this->models = $this->modelNames = $models;
 
-        $this->modelNames = collect($models)->map(function (mixed $model) {
-            if ($model instanceof Model) {
-                return $this->makeModelName($model);
-            }
+            return $this;
+        }
 
-            return $model;
-        });
+        if (is_string($models[0])) {
+            $this->modelNames = $models;
+        } else {
+            $this->models = $models;
+
+            $this->modelNames = collect($models)->map(function (mixed $model) {
+                if ($model instanceof Model) {
+                    return $this->makeModelName($model);
+                }
+
+                return $model;
+            });
+        }
 
         return $this;
     }

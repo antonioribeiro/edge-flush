@@ -43,7 +43,10 @@ class Tags
         string $key = null,
         array $allowedKeys = []
     ): void {
-        if (!EdgeFlush::enabled() || blank($model->getAttributes()[$key] ?? null)) {
+        if (
+            !EdgeFlush::enabled() ||
+            blank($model->getAttributes()[$key] ?? null)
+        ) {
             return;
         }
 
@@ -235,18 +238,26 @@ class Tags
             return;
         }
 
-        Helpers::debug(
-            'INVALIDATING tags for models: ' .
-                $models
-                    ->map(
-                        fn(Model|string $model) => $model instanceof Model
-                            ? $this->makeModelName($model)
-                            : $model,
-                    )
-                    ->join(', '),
-        );
+        $modelNames = collect();
 
-        InvalidateTags::dispatch((new Invalidation())->setModels($models));
+        foreach ($models as $model) {
+            foreach ($model->getAttributes() as $key => $updated) {
+                if (
+                    $updated !== $model->getOriginal($key) &&
+                    $this->granularPropertyIsAllowed($key, $model)
+                ) {
+                    $modelNames[] = $this->makeModelName($model, $key);
+                }
+            }
+        }
+
+        if ($modelNames->isEmpty()) {
+            return;
+        }
+
+        Helpers::debug('INVALIDATING tags: ' . $modelNames->join(', '));
+
+        InvalidateTags::dispatch((new Invalidation())->setModels($modelNames));
     }
 
     public function invalidateTags(Invalidation $invalidation): void
@@ -629,5 +640,15 @@ class Tags
             ";
 
         $this->dbStatement($sql);
+    }
+
+    public function granularPropertyIsAllowed($name, $model)
+    {
+        $ignored = collect(
+            Helpers::configArray('edge-flush.invalidations.properties.ignored'),
+        );
+
+        return !$ignored->contains($name) &&
+            !$ignored->contains(get_class($model) . "@$name");
     }
 }
