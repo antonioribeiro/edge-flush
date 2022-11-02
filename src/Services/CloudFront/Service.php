@@ -143,6 +143,12 @@ class Service extends BaseService implements CDNService
                 ')...',
         );
 
+        if (!$this->isProperlyConfigured()) {
+            Helpers::debug('[CLOUD FRONT]: Service is disabled.');
+
+            return $invalidation;
+        }
+
         try {
             $response = $this->client->createInvalidation([
                 'DistributionId' => $this->getDistributionId(),
@@ -156,7 +162,7 @@ class Service extends BaseService implements CDNService
             ]);
         } catch (\Exception $e) {
             Log::error(
-                '[EDGE-FLUSH] CloudFront invalidation request failed: ' .
+                '[EDGE-FLUSH] [CLOUD FRONT] Invalidation request failed: ' .
                     $e->getMessage() .
                     ' - PATHS: ' .
                     json_encode($paths),
@@ -254,5 +260,10 @@ class Service extends BaseService implements CDNService
             'DistributionId' => $this->getDistributionId(),
             'Id' => $invalidationId,
         ]);
+    }
+
+    public function isProperlyConfigured(): bool
+    {
+        return filled($this->client);
     }
 }

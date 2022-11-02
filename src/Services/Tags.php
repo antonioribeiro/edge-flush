@@ -123,7 +123,7 @@ class Tags
         );
     }
 
-    protected function tagIsExcluded(string $tag): bool
+    public function tagIsExcluded(string $tag): bool
     {
         /**
          * @param callable(string $pattern): boolean $pattern
@@ -133,7 +133,7 @@ class Tags
         )->contains(fn(string $pattern) => EdgeFlush::match($pattern, $tag));
     }
 
-    protected function tagIsNotExcluded(string $tag): bool
+    public function tagIsNotExcluded(string $tag): bool
     {
         return !$this->tagIsExcluded($tag);
     }
@@ -194,16 +194,9 @@ class Tags
                 ->join(',');
 
             $this->dbStatement("
-                        update edge_flush_tags
-                        set obsolete = false
-                        where index in ({$indexes})
-                          and is_valid = true
-                          and obsolete = false
-                        ");
-
-            $this->dbStatement("
                         update edge_flush_urls
-                        set was_purged_at = null,
+                        set obsolete = false,
+                            was_purged_at = null,
                             invalidation_id = null
                         where is_valid = true
                           and was_purged_at is not null
@@ -249,7 +242,11 @@ class Tags
                     $updated !== $model->getOriginal($key) &&
                     $this->granularPropertyIsAllowed($key, $model)
                 ) {
-                    $modelNames[] = $this->makeModelName($model, $key);
+                    $modelName = $this->makeModelName($model, $key);
+
+                    if (filled($modelName)) {
+                        $modelNames[] = $modelName;
+                    }
                 }
             }
         }
@@ -258,7 +255,10 @@ class Tags
             return;
         }
 
-        Helpers::debug('INVALIDATING tags: ' . $modelNames->join(', '));
+        Helpers::debug(
+            'Dispatching invalidation job for models: ' .
+                $modelNames->join(', '),
+        );
 
         InvalidateTags::dispatch((new Invalidation())->setModels($modelNames));
     }
@@ -295,9 +295,8 @@ class Tags
                 "
             select distinct edge_flush_urls.id, edge_flush_urls.hits, edge_flush_urls.url
             from edge_flush_urls
-                     inner join edge_flush_tags on edge_flush_tags.url_id = edge_flush_urls.id
             where edge_flush_urls.was_purged_at is null
-              and edge_flush_tags.obsolete = true
+              and edge_flush_urls.obsolete = true
               and edge_flush_urls.is_valid = true
             order by edge_flush_urls.hits desc
             ",
@@ -328,19 +327,30 @@ class Tags
 
         $items = $invalidation->queryItemsList();
 
+        /**
+         * Search for URls:
+         *    - Not obsolete
+         *    - Not purged yet, if it was purged, it's waiting for a warmup or a user to request it
+         */
         $this->dbStatement("
-            update edge_flush_tags eft
+            update edge_flush_urls efu
             set obsolete = true
-            from (
-                    select id
-                    from edge_flush_tags
-                    where is_valid = true
-                      and obsolete = false
-                      and {$type} in ({$items})
-                    order by id
-                    for update
-                ) tags
-            where eft.id = tags.id
+                from (
+                         select id
+                         from edge_flush_urls
+                         where is_valid = true
+                           and obsolete = false
+                           and was_purged_at is null
+                           and id in (
+                                 select url_id
+                                 from edge_flush_tags
+                                 where is_valid = true
+                                 and {$type} in ({$items})
+                             )
+                         order by id
+                             for update
+                     ) urls
+                        where efu.id = urls.id
         ");
     }
 
@@ -366,7 +376,7 @@ class Tags
 
         Helpers::debug('INVALIDATING: entire cache...');
 
-        $invalidation->setInvalidateAll(true);
+        $invalidation->setMustInvalidateAll(true);
 
         EdgeFlush::cdn()->invalidate(
             $invalidation->setPaths(
@@ -442,30 +452,16 @@ class Tags
 
     protected function deleteAllTags(): void
     {
-        // Purge all tags
-        $this->dbStatement("
-            update edge_flush_tags eft
-            set obsolete = true
-            from (
-                    select id
-                    from edge_flush_tags
-                    where obsolete = false
-                    order by id
-                    for update
-                ) tags
-            where eft.id = tags.id
-        ");
-
-        // Purge all urls
         $now = (string) now();
 
         $this->dbStatement("
             update edge_flush_urls efu
-            set was_purged_at = '$now'
+            set obsolete = true,
+                set was_purged_at = '$now'
             from (
                     select id
                     from edge_flush_urls
-                    where is_valid = true
+                    where obsolete = false
                     order by id
                     for update
                 ) urls
@@ -552,7 +548,7 @@ class Tags
 
         $invalidationId = $invalidation->id();
 
-        if ($invalidation->invalidateAll()) {
+        if ($invalidation->mustInvalidateAll()) {
             $sql = "
                 update edge_flush_urls efu
                 set was_purged_at = '{$time}',
@@ -562,28 +558,15 @@ class Tags
                         from edge_flush_urls efu
                         where efu.is_valid = true
                           and was_purged_at is null
+                           or obsolete = false
                         order by efu.id
                         for update
                     ) urls
                 where efu.id = urls.id
             ";
         } elseif ($invalidation->type() === 'tag') {
-            $sql = "
-                update edge_flush_urls efu
-                set was_purged_at = '{$time}',
-                    invalidation_id = '{$invalidationId}'
-                from (
-                        select efu.id
-                        from edge_flush_urls efu
-                        join edge_flush_tags eft on eft.url_id = efu.id
-                        where efu.is_valid = true
-                          and eft.url in ({$list})
-                        order by efu.id
-                        for update
-                    ) urls
-                where efu.id = urls.id
-            ";
-        } else {
+            throw new \Exception("Invalidating tags directly is not supported for now.");
+        } elseif ($invalidation->type() === 'url') {
             $sql = "
                 update edge_flush_urls efu
                 set was_purged_at = '{$time}',
@@ -611,25 +594,9 @@ class Tags
             ->join(',');
 
         $sql = "
-            update edge_flush_tags eft
-            set obsolete = false
-            from (
-                    select id
-                    from edge_flush_tags
-                    where is_valid = true
-                      and obsolete = true
-                      and url_id in ({$list})
-                    order by id
-                    for update
-                ) tags
-            where eft.id = tags.id
-            ";
-
-        $this->dbStatement($sql);
-
-        $sql = "
                 update edge_flush_urls efu
-                set was_purged_at = null,
+                set obsolete = false,
+                    was_purged_at = null,
                     invalidation_id = null
                 from (
                         select efu.id

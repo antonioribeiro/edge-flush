@@ -24,7 +24,7 @@ class Invalidation
 
     protected string|null $type = null;
 
-    protected bool $invalidateAll = false;
+    protected bool $mustInvalidateAll = false;
 
     protected Carbon|string|null $createdAt = null;
 
@@ -343,16 +343,16 @@ class Invalidation
         return $this->urlNames = $this->urls()->map->url;
     }
 
-    public function setInvalidateAll(bool $value = true): self
+    public function setMustInvalidateAll(bool $value = true): self
     {
-        $this->invalidateAll = $value;
+        $this->mustInvalidateAll = $value;
 
         return $this;
     }
 
-    public function invalidateAll(): bool
+    public function mustInvalidateAll(): bool
     {
-        return $this->invalidateAll;
+        return $this->mustInvalidateAll;
     }
 
     public function __sleep(): array
@@ -362,7 +362,7 @@ class Invalidation
             'status',
             'success',
             'type',
-            'invalidateAll',
+            'mustInvalidateAll',
             'modelNames',
             'tagNames',
             'urlNames',
